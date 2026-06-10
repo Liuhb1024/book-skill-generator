@@ -15,7 +15,7 @@ def detect_chapters(text: str) -> list[ChapterInfo]:
     chapters = []
     for pattern in CHAPTER_PATTERNS:
         matches = list(pattern.finditer(text))
-        if len(matches) >= 3:
+        if len(matches) >= 2:
             for i, m in enumerate(matches):
                 number = m.group(1).strip() if m.lastindex and m.lastindex >= 1 else str(i + 1)
                 title = m.group(2).strip() if m.lastindex and m.lastindex >= 2 else m.group(0).strip()
