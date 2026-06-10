@@ -4,6 +4,7 @@ import pytest
 
 from app.parsers.base import ParseError
 from app.pipeline.stage0_extract import extract
+from app.parsers.chapter_detector import distillable_chapters
 
 
 def test_extract_txt_detects_chinese_chapters(tmp_path):
@@ -33,7 +34,8 @@ def test_extract_txt_detects_chinese_chapters(tmp_path):
     assert meta.chapter_count >= 2
     assert meta.fallback_chunking is False
     assert len(chapters) >= 2
-    assert chapters[0].title == "为什么学习"
+    chapter_only = distillable_chapters(chapters)
+    assert chapter_only[0].title == "为什么学习"
     assert "费曼技巧" in full_text
 
 

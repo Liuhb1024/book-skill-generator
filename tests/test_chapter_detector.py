@@ -19,8 +19,11 @@ def test_detect_chinese_chapters():
 """
     chapters = detect_chapters(text)
     assert len(chapters) >= 3
-    assert chapters[0].title == "为什么学习"
-    assert chapters[1].title == "如何学习"
+    chapter_only = [chapter for chapter in chapters if chapter.label.startswith("ch")]
+    assert chapter_only[0].title == "为什么学习"
+    assert chapter_only[1].title == "如何学习"
+    assert chapter_only[0].label == "ch01"
+    assert chapter_only[0].file_number == "01"
 
 
 def test_detect_english_chapters():
@@ -40,9 +43,34 @@ Chapter 3: The Science of Learning
 Brain research shows.
 """
     chapters = detect_chapters(text)
-    assert len(chapters) >= 3
-    assert "1" in chapters[0].number
-    assert "2" in chapters[1].number
+    chapter_only = [chapter for chapter in chapters if chapter.label.startswith("ch")]
+    assert len(chapter_only) >= 3
+    assert chapter_only[0].file_number == "01"
+    assert chapter_only[1].file_number == "02"
+
+
+def test_detect_special_front_and_back_matter():
+    text = """
+目录
+
+第一章 开始
+内容
+
+第二章 继续
+内容
+
+附录 A 工具
+内容
+
+参考文献
+内容
+"""
+    chapters = detect_chapters(text)
+    labels = [chapter.label for chapter in chapters]
+    assert "fm" in labels
+    assert "ch01" in labels
+    assert "appendix-a" in labels
+    assert "bm" in labels
 
 
 def test_no_chapters_returns_empty():
@@ -64,3 +92,4 @@ def test_fallback_chunk_labels():
     chunks = fallback_chunk(text, chunk_size=3000)
     assert chunks[0].number == "chunk-01"
     assert chunks[1].number == "chunk-02"
+    assert chunks[0].label == "ch01"

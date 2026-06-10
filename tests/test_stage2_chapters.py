@@ -30,11 +30,12 @@ def test_run_chapter_distillation_integration():
     _, chapters, _ = extract(Path("test_fixtures/sample.txt"))
 
     outputs, prompt_tokens, completion_tokens, cost = asyncio.run(
-        run_chapter_distillation(chapters[:2], max_concurrent=2)
+        run_chapter_distillation(chapters, max_concurrent=2)
     )
 
     assert len(outputs) == 2
-    assert all(output.frameworks or output.methodologies for output in outputs)
+    assert all("## 核心要旨" in output[2] for output in outputs)
+    assert all("chapter_number" not in output[2] for output in outputs)
     assert prompt_tokens > 0
     assert completion_tokens > 0
     assert cost > 0

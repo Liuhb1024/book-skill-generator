@@ -22,6 +22,9 @@ class ChapterInfo(BaseModel):
     title: str
     content: str
     char_count: int
+    label: str = ""
+    display_number: str = ""
+    file_number: str = ""
 
 
 class BookMeta(BaseModel):

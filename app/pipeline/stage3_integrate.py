@@ -1,84 +1,67 @@
-import json
 import re
+from datetime import date
 
 from app.ai_client import call_ai, estimate_cost
 from app.config import settings
-from app.models import ChapterOutput, SkeletonOutput
 from app.prompts.integrate import SYSTEM_PROMPT, USER_PROMPT_TEMPLATE
 
 
 def run_integration(
-    skeleton: SkeletonOutput,
-    chapter_outputs: list[ChapterOutput],
-) -> tuple[dict, int, int, float]:
-    skeleton_json = json.dumps(skeleton.model_dump(), ensure_ascii=False)
-    chapters_json = json.dumps(
-        [chapter.model_dump() for chapter in chapter_outputs],
-        ensure_ascii=False,
+    spine_md: str,
+    chapter_mds: list[tuple[str, str, str, int, int]],
+    book_title: str = "未知书名",
+    author: str = "未知",
+    slug: str = "book-skill",
+) -> tuple[str, int, int, float]:
+    chapters_md = "\n\n---\n\n".join(
+        f"文件编号：{number}\n章节标题：{title}\n\n{markdown}"
+        for number, title, markdown, _, _ in chapter_mds
     )
     user_prompt = USER_PROMPT_TEMPLATE.format(
-        skeleton_json=skeleton_json,
-        chapters_json=chapters_json,
+        book_title=book_title,
+        author=author or "未知",
+        slug=slug,
+        chapter_count=len(chapter_mds),
+        generated_date=date.today().isoformat(),
+        spine_md=spine_md,
+        chapters_md=chapters_md,
     )
-    user_prompt += (
-        "\n\n请确保输出 JSON 至少包含 merged_frameworks 和 skill_md_content 两个非空字段。"
-        "merged_frameworks 应为整合后的框架列表，skill_md_content 应为可直接写入 SKILL.md 的 Markdown 内容。"
-    )
-
     content, prompt_tokens, completion_tokens = call_ai(
         SYSTEM_PROMPT,
         user_prompt,
         model=settings.INTEGRATE_MODEL,
         temperature=0.3,
-        response_format="json_object",
-        max_tokens=4096,
+        response_format=None,
+        max_tokens=8192,
     )
-    result = _normalize_integration_result(
-        _parse_json_object(content),
-        skeleton,
-        chapter_outputs,
-    )
+    skill_md = _normalize_skill_md(_strip_code_fence(content), slug, book_title, len(chapter_mds))
     cost = estimate_cost(prompt_tokens, completion_tokens, model=settings.INTEGRATE_MODEL)
-    return result, prompt_tokens, completion_tokens, cost
+    return skill_md, prompt_tokens, completion_tokens, cost
 
 
-def _parse_json_object(content: str) -> dict:
-    try:
-        return json.loads(content)
-    except json.JSONDecodeError:
-        match = re.search(r"\{.*\}", content, re.DOTALL)
-        if not match:
-            raise
-        return json.loads(match.group(0))
+def _normalize_skill_md(skill_md: str, slug: str, book_title: str, chapter_count: int) -> str:
+    text = skill_md.strip()
+    if not text.startswith("---"):
+        text = (
+            "---\n"
+            f"name: {slug}\n"
+            f"description: 基于《{book_title}》蒸馏的 AI 技能。当需要运用本书核心框架和方法论时使用。\n"
+            "allowed-tools: Read\n"
+            "---\n\n"
+            f"# 《{book_title}》\n\n"
+            f"{text}"
+        )
+    text = re.sub(r"name:\s*.*", f"name: {slug}", text, count=1)
+    if "allowed-tools:" not in text.split("---", 2)[1]:
+        text = text.replace("---", "---\nallowed-tools: Read", 1)
+    text = re.sub(r"\*\*章节\*\*：\d+章", f"**章节**：{chapter_count}章", text)
+    text = re.sub(r"\*\*生成日期\*\*：\d{4}[-:/]\d{1,2}[-:/]\d{1,2}", f"**生成日期**：{date.today().isoformat()}", text)
+    return text
 
 
-def _normalize_integration_result(
-    result: dict,
-    skeleton: SkeletonOutput,
-    chapter_outputs: list[ChapterOutput],
-) -> dict:
-    if not result.get("merged_frameworks"):
-        result["merged_frameworks"] = skeleton.frameworks or [
-            {"name": item}
-            for chapter in chapter_outputs
-            for item in chapter.frameworks
-        ]
-
-    if not result.get("skill_md_content"):
-        framework_lines = []
-        for item in result["merged_frameworks"]:
-            if isinstance(item, dict):
-                framework_lines.append(f"- {item.get('name') or item.get('title') or item}")
-            else:
-                framework_lines.append(f"- {item}")
-        result["skill_md_content"] = "\n".join(
-            [
-                "# 本书核心",
-                skeleton.thesis,
-                "",
-                "## 关键框架",
-                *framework_lines,
-            ]
-        ).strip()
-
-    return result
+def _strip_code_fence(content: str) -> str:
+    text = content.strip()
+    if text.startswith("```"):
+        text = re.sub(r"^```(?:markdown)?\s*", "", text, flags=re.IGNORECASE)
+        text = re.sub(r"\s*```$", "", text)
+    return text.strip()

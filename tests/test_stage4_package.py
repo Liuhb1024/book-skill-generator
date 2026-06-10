@@ -1,6 +1,5 @@
 import zipfile
 
-from app.models import ChapterOutput
 from app.pipeline.stage4_package import build_skill_package
 
 
@@ -8,28 +7,14 @@ def test_build_skill_package(tmp_path):
     zip_path = build_skill_package(
         title="测试书",
         slug="test-book",
-        thesis="这是本书核心。",
-        frameworks=[
-            {"name": "费曼技巧", "description": "用自己的话解释概念", "related_chapters": ["二"]},
+        skill_md_content="---\nname: test-book\ndescription: test\nallowed-tools: Read\n---\n\n# 测试书\n",
+        chapter_mds=[
+            ("01", "为什么学习", "# 第一章：为什么学习\n\n## 核心要旨\n学习的本质。", 10, 5),
         ],
-        chapter_index=[
-            {"chapter_number": "一", "title": "为什么学习", "summary": "学习的本质。"},
-        ],
-        glossary=[
+        glossary_terms=[
             {"term": "元认知", "definition": "理解和控制自己的思维过程", "chapter": "一"},
         ],
-        triggers=["需要设计学习计划时"],
-        chapter_outputs=[
-            ChapterOutput(
-                chapter_number="一",
-                chapter_title="为什么学习",
-                frameworks=["元认知循环"],
-                methodologies=["间隔重复"],
-                cases=["学习方法案例"],
-                anti_patterns=["只集中突击"],
-                actionable_steps=["安排复盘"],
-            )
-        ],
+        spine_md="# 骨架",
         output_dir=tmp_path,
     )
 
@@ -39,6 +24,7 @@ def test_build_skill_package(tmp_path):
 
     assert "SKILL.md" in names
     assert "README.md" in names
+    assert "raw/spine.md" in names
     assert any(name.startswith("chapters/") and name.endswith(".md") for name in names)
     assert "guides/glossary.md" in names
 
@@ -47,18 +33,12 @@ def test_missing_optional_content(tmp_path):
     zip_path = build_skill_package(
         title="测试书",
         slug="test-book-no-glossary",
-        thesis="这是本书核心。",
-        frameworks=[],
-        chapter_index=[],
-        glossary=[],
-        triggers=[],
-        chapter_outputs=[
-            ChapterOutput(
-                chapter_number="一",
-                chapter_title="为什么学习",
-                frameworks=["元认知循环"],
-            )
+        skill_md_content="---\nname: test-book-no-glossary\ndescription: test\nallowed-tools: Read\n---\n\n# 测试书\n",
+        chapter_mds=[
+            ("01", "为什么学习", "# 第一章：为什么学习\n\n## 核心要旨\n学习的本质。", 10, 5),
         ],
+        glossary_terms=[],
+        spine_md="# 骨架",
         output_dir=tmp_path,
     )
 
@@ -67,4 +47,5 @@ def test_missing_optional_content(tmp_path):
 
     assert "SKILL.md" in names
     assert "README.md" in names
+    assert "raw/spine.md" in names
     assert "guides/glossary.md" not in names

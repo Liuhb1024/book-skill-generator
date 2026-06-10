@@ -6,21 +6,19 @@ from pathlib import Path
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 
 from app.config import settings
-from app.models import ChapterOutput
 
 
 TEMPLATE_DIR = Path(__file__).parent.parent / "templates"
+ChapterMarkdown = tuple[str, str, str, int, int]
 
 
 def build_skill_package(
     title: str,
     slug: str,
-    thesis: str,
-    frameworks: list[dict],
-    chapter_index: list[dict],
-    glossary: list[dict],
-    triggers: list[str],
-    chapter_outputs: list[ChapterOutput],
+    skill_md_content: str,
+    chapter_mds: list[ChapterMarkdown],
+    glossary_terms: list[dict] | list[str] | None = None,
+    spine_md: str = "",
     output_dir: Path | str | None = None,
 ) -> Path:
     base_dir = Path(output_dir or settings.OUTPUT_DIR)
@@ -35,40 +33,33 @@ def build_skill_package(
 
     try:
         work_dir.mkdir(parents=True)
-        chapters_dir = work_dir / "chapters"
-        chapters_dir.mkdir()
+        (work_dir / "chapters").mkdir()
+        (work_dir / "raw").mkdir()
+
+        (work_dir / "SKILL.md").write_text(skill_md_content.strip() + "\n", encoding="utf-8")
+        (work_dir / "raw" / "spine.md").write_text(spine_md.strip() + "\n", encoding="utf-8")
 
         env = _get_template_env()
-        context = {
-            "title": title,
-            "slug": slug,
-            "thesis": thesis,
-            "frameworks": _normalize_frameworks(frameworks),
-            "chapter_index": _normalize_chapter_index(chapter_index),
-            "glossary": _normalize_glossary(glossary),
-            "triggers": triggers,
-            "chapter_outputs": chapter_outputs,
-        }
-
-        (work_dir / "SKILL.md").write_text(
-            env.get_template("SKILL.md.j2").render(**context),
-            encoding="utf-8",
-        )
         (work_dir / "README.md").write_text(
-            env.get_template("README.md.j2").render(**context),
+            env.get_template("README.md.j2").render(
+                title=title,
+                slug=slug,
+                chapter_count=len(chapter_mds),
+                has_glossary=bool(glossary_terms),
+            ),
             encoding="utf-8",
         )
 
-        for chapter in chapter_outputs:
-            filename = _safe_filename(f"{chapter.chapter_number}-{chapter.chapter_title}.md")
-            (chapters_dir / filename).write_text(_format_chapter_md(chapter), encoding="utf-8")
+        for number, title_text, markdown, _, _ in chapter_mds:
+            filename = _safe_filename(f"{number}-{title_text}.md")
+            (work_dir / "chapters" / filename).write_text(markdown.strip() + "\n", encoding="utf-8")
 
-        normalized_glossary = context["glossary"]
-        if normalized_glossary:
+        glossary_terms = glossary_terms or _extract_glossary_terms(spine_md)
+        if glossary_terms:
             guides_dir = work_dir / "guides"
             guides_dir.mkdir()
             (guides_dir / "glossary.md").write_text(
-                _format_glossary_md(normalized_glossary),
+                _format_glossary_md(glossary_terms),
                 encoding="utf-8",
             )
 
@@ -89,29 +80,37 @@ def _get_template_env() -> Environment:
     )
 
 
-def _format_chapter_md(chapter: ChapterOutput) -> str:
-    sections = [
-        ("核心框架", chapter.frameworks),
-        ("方法论/技巧", chapter.methodologies),
-        ("书中案例", chapter.cases),
-        ("反模式/常见误区", chapter.anti_patterns),
-        ("可执行步骤", chapter.actionable_steps),
-    ]
-    lines = [f"# {chapter.chapter_number} {chapter.chapter_title}", ""]
-    for heading, items in sections:
-        if not items:
-            continue
-        lines.extend([f"## {heading}", ""])
-        lines.extend(f"- {item}" for item in items)
-        lines.append("")
-    return "\n".join(lines).rstrip() + "\n"
-
-
-def _format_glossary_md(glossary: list[dict]) -> str:
-    lines = ["# 术语速查", "", "| 术语 | 定义 | 章节 |", "|------|------|------|"]
-    for item in glossary:
-        lines.append(f"| {item['term']} | {item['definition']} | {item['chapter']} |")
+def _format_glossary_md(glossary_terms: list[dict] | list[str]) -> str:
+    lines = ["# 术语表", "", "| 术语 | 定义 | 章节 |", "|------|------|------|"]
+    for item in glossary_terms:
+        if isinstance(item, dict):
+            term = item.get("term") or item.get("name") or ""
+            definition = item.get("definition") or item.get("description") or ""
+            chapter = item.get("chapter") or item.get("chapter_number") or ""
+        else:
+            term = str(item)
+            definition = ""
+            chapter = ""
+        lines.append(f"| {term} | {definition} | {chapter} |")
     return "\n".join(lines) + "\n"
+
+
+def _extract_glossary_terms(spine_md: str) -> list[dict]:
+    terms = []
+    in_table = False
+    for line in spine_md.splitlines():
+        if "## 关键术语表" in line:
+            in_table = True
+            continue
+        if in_table and line.startswith("## "):
+            break
+        if not in_table or not line.strip().startswith("|"):
+            continue
+        cells = [cell.strip() for cell in line.strip().strip("|").split("|")]
+        if len(cells) < 3 or cells[0] in {"术语", "------"} or set(cells[0]) == {"-"}:
+            continue
+        terms.append({"term": cells[0], "definition": cells[1], "chapter": cells[2]})
+    return terms
 
 
 def _zip_directory_contents(source_dir: Path, zip_path: Path) -> None:
@@ -125,44 +124,3 @@ def _safe_filename(filename: str) -> str:
     filename = re.sub(r"[\\/:*?\"<>|]+", "-", filename)
     filename = re.sub(r"\s+", " ", filename).strip()
     return filename or "chapter.md"
-
-
-def _normalize_frameworks(frameworks: list[dict]) -> list[dict]:
-    normalized = []
-    for item in frameworks:
-        if not isinstance(item, dict):
-            item = {"name": str(item)}
-        normalized.append(
-            {
-                "name": item.get("name") or item.get("title") or "",
-                "description": item.get("description") or item.get("summary") or "",
-                "related_chapters": item.get("related_chapters") or item.get("chapters") or [],
-            }
-        )
-    return normalized
-
-
-def _normalize_chapter_index(chapter_index: list[dict]) -> list[dict]:
-    normalized = []
-    for item in chapter_index:
-        normalized.append(
-            {
-                "chapter_number": item.get("chapter_number") or item.get("number") or item.get("chapter") or "",
-                "title": item.get("title") or item.get("topic") or "",
-                "summary": item.get("summary") or item.get("description") or "",
-            }
-        )
-    return normalized
-
-
-def _normalize_glossary(glossary: list[dict]) -> list[dict]:
-    normalized = []
-    for item in glossary:
-        normalized.append(
-            {
-                "term": item.get("term") or item.get("name") or "",
-                "definition": item.get("definition") or item.get("description") or "",
-                "chapter": item.get("chapter") or item.get("chapter_number") or "",
-            }
-        )
-    return normalized
