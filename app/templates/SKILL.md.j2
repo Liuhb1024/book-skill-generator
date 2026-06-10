@@ -1,0 +1,31 @@
+---
+name: {{ slug }}
+description: 基于《{{ title }}》蒸馏的AI技能——可扮演作者思维、提供方法论指导、快速查阅书中精华
+---
+
+# 本书核心
+{{ thesis }}
+
+# 关键框架
+{% for f in frameworks %}
+{{ loop.index }}. **{{ f.name }}** — {{ f.description }} (详见第{{ f.related_chapters|join('、') }}章)
+{% endfor %}
+
+# 章节索引
+| 章节 | 主题 |
+|------|------|
+{% for ch in chapter_index %}
+| {{ ch.chapter_number }} {{ ch.title }} | {{ ch.summary }} |
+{% endfor %}
+
+# 触发场景
+{% for t in triggers %}
+- {{ t }}
+{% endfor %}
+
+# 术语速查
+| 术语 | 定义 | 章节 |
+|------|------|------|
+{% for g in glossary %}
+| {{ g.term }} | {{ g.definition }} | {{ g.chapter }} |
+{% endfor %}

@@ -1,0 +1,23 @@
+# {{ title }} Skill
+
+基于《{{ title }}》蒸馏生成的 Claude Code Skill 包。
+
+## 安装方法
+
+将本 zip 解压到 Claude Code skills 目录，确保 `SKILL.md` 位于 skill 根目录。
+
+## 使用场景
+
+1. 需要快速复盘《{{ title }}》的核心论点时。
+2. 需要把书中的方法论转化为行动清单时。
+3. 需要按章节查找框架、案例、反模式和步骤时。
+4. 需要让 AI 以本书思维辅助分析具体问题时。
+
+## 文件说明
+
+- `SKILL.md`：技能入口和全书核心摘要。
+- `chapters/`：逐章蒸馏结果。
+{% if glossary %}
+- `guides/glossary.md`：术语速查表。
+{% endif %}
+- `README.md`：安装和使用说明。
