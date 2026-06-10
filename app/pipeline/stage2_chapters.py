@@ -26,19 +26,49 @@ def _trim_chapter_content(
     )
 
 
-def _has_repetition_loop(text: str, char_threshold: int = 10) -> bool:
+def _has_repetition_loop(text: str, char_threshold: int = 6) -> bool:
     """检测字符级/2-gram/3-gram 连续重复。
 
     例如 "夫夫夫夫夫夫夫夫夫夫夫" 会被 (.)\1{10,} 匹配。
-    阈值 10 意味着同一字符连续出现 11 次才触发。
+    阈值 6 意味着同一字符连续出现 7 次才触发。
     """
-    if re.search(r"(.)\1{" + str(char_threshold) + r",}", text):
+    token_chars = r"\u4e00-\u9fffA-Za-z0-9"
+    if re.search(r"([" + token_chars + r"])\1{" + str(char_threshold) + r",}", text):
         return True
-    if re.search(r"(.{2})\1{" + str(char_threshold // 2) + r",}", text):
+    if re.search(r"([" + token_chars + r"]{2})\1{" + str(char_threshold // 2) + r",}", text):
         return True
-    if re.search(r"(.{3})\1{" + str(char_threshold // 3) + r",}", text):
+    if re.search(r"([" + token_chars + r"]{3})\1{" + str(char_threshold // 3) + r",}", text):
         return True
     return False
+
+
+def _has_degenerate_cjk_window(
+    text: str,
+    window_size: int = 120,
+    min_unique_chars: int = 18,
+) -> bool:
+    """检测中文长窗口内字符多样性异常低的分布塌缩。"""
+    cjk_chars = [char for char in text if "\u4e00" <= char <= "\u9fff"]
+    if len(cjk_chars) < window_size:
+        return False
+
+    step = max(1, window_size // 4)
+    for start in range(0, len(cjk_chars) - window_size + 1, step):
+        window = cjk_chars[start : start + window_size]
+        if len(set(window)) < min_unique_chars:
+            return True
+    return False
+
+
+def _chapter_quality_failure_reason(content: str, chapter: ChapterInfo) -> str | None:
+    stripped = _strip_code_fence(content)
+    if _has_repetition_loop(stripped):
+        return "检测到字符级或 n-gram 重复循环"
+    if _has_degenerate_cjk_window(stripped):
+        return "检测到中文字符分布塌缩"
+    if len(chapter.content) > 1000 and len(stripped) < 500:
+        return f"章节输出过短 ({len(stripped)} chars)"
+    return None
 
 
 async def run_chapter_distillation(
@@ -64,7 +94,13 @@ async def run_chapter_distillation(
         outputs.append((number, title, chapter_md, prompt_tokens, completion_tokens))
         total_prompt_tokens += prompt_tokens
         total_completion_tokens += completion_tokens
-        total_cost += estimate_cost(prompt_tokens, completion_tokens, model=settings.CHAPTER_MODEL)
+        chapter_cost = estimate_cost(prompt_tokens, completion_tokens, model=settings.CHAPTER_MODEL)
+        total_cost += chapter_cost
+        print(
+            f"Stage 2 chapter {number} cost: "
+            f"prompt_tokens={prompt_tokens}, completion_tokens={completion_tokens}, "
+            f"cost={chapter_cost:.6f}"
+        )
 
     return outputs, total_prompt_tokens, total_completion_tokens, round(total_cost, 6)
 
@@ -84,20 +120,26 @@ async def _process_one_chapter(
                 )
                 freq_pen = 0.5 + attempt * 0.3
                 pres_pen = 0.3 + attempt * 0.1
+                temperature = 0.8 - attempt * 0.1
+                top_p = 0.9 - attempt * 0.05
                 content, prompt_tokens, completion_tokens = await asyncio.to_thread(
                     call_ai,
                     SYSTEM_PROMPT,
                     user_prompt,
                     model=settings.CHAPTER_MODEL,
+                    temperature=temperature,
                     response_format=None,
                     max_tokens=4096,
                     frequency_penalty=freq_pen,
                     presence_penalty=pres_pen,
+                    top_p=top_p,
                 )
-                if _has_repetition_loop(content):
+                quality_failure = _chapter_quality_failure_reason(content, chapter)
+                if quality_failure:
                     raise RuntimeError(
-                        f"检测到字符级重复循环 (attempt {attempt + 1}/3, "
-                        f"freq_pen={freq_pen}, pres_pen={pres_pen})，将重试"
+                        f"{quality_failure} (attempt {attempt + 1}/3, "
+                        f"freq_pen={freq_pen}, pres_pen={pres_pen}, "
+                        f"temperature={temperature}, top_p={top_p})，将重试"
                     )
                 return (
                     chapter.file_number or chapter.number,

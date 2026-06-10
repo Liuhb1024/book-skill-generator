@@ -34,6 +34,7 @@ def run_integration(
         max_tokens=8192,
         frequency_penalty=0.3,
         presence_penalty=0.3,
+        top_p=0.9,
     )
     skill_md = _normalize_skill_md(_strip_code_fence(content), slug, book_title, len(chapter_mds))
     cost = estimate_cost(prompt_tokens, completion_tokens, model=settings.INTEGRATE_MODEL)

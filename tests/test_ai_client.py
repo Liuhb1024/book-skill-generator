@@ -33,6 +33,7 @@ def test_call_ai_returns_content_and_tokens(monkeypatch):
         max_tokens=512,
         frequency_penalty=0.5,
         presence_penalty=0.3,
+        top_p=0.9,
     )
 
     assert content == '{"ok": true}'
@@ -44,6 +45,7 @@ def test_call_ai_returns_content_and_tokens(monkeypatch):
     assert fake_client.chat.completions.kwargs["response_format"] == {"type": "json_object"}
     assert fake_client.chat.completions.kwargs["frequency_penalty"] == 0.5
     assert fake_client.chat.completions.kwargs["presence_penalty"] == 0.3
+    assert fake_client.chat.completions.kwargs["top_p"] == 0.9
     assert fake_client.chat.completions.kwargs["messages"] == [
         {"role": "system", "content": "You are a JSON API."},
         {"role": "user", "content": "Return ok."},

@@ -228,7 +228,13 @@ async def _distill_chapters_with_progress(chapters):
         outputs.append((number, title, markdown, prompt_tokens, completion_tokens))
         total_prompt_tokens += prompt_tokens
         total_completion_tokens += completion_tokens
-        total_cost += estimate_cost(prompt_tokens, completion_tokens, model=settings.CHAPTER_MODEL)
+        chapter_cost = estimate_cost(prompt_tokens, completion_tokens, model=settings.CHAPTER_MODEL)
+        total_cost += chapter_cost
+        print(
+            f"Stage 2 chapter {number} cost: "
+            f"prompt_tokens={prompt_tokens}, completion_tokens={completion_tokens}, "
+            f"cost={chapter_cost:.6f}"
+        )
 
     outputs.sort(key=lambda item: item[0])
     return outputs, total_prompt_tokens, total_completion_tokens, round(total_cost, 6)

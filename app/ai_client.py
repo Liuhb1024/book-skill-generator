@@ -27,6 +27,7 @@ def call_ai(
     max_tokens: int = 4096,
     frequency_penalty: float = 0.0,
     presence_penalty: float = 0.0,
+    top_p: float = 1.0,
 ) -> tuple[str, int, int]:
     request_format = response_format
     if isinstance(response_format, str):
@@ -42,6 +43,7 @@ def call_ai(
         "max_tokens": max_tokens,
         "frequency_penalty": frequency_penalty,
         "presence_penalty": presence_penalty,
+        "top_p": top_p,
     }
     if request_format is not None:
         kwargs["response_format"] = request_format
