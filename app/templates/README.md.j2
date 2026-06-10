@@ -17,7 +17,12 @@
 
 - `SKILL.md`：技能入口和全书核心摘要。
 - `chapters/`：逐章蒸馏结果。
-{% if glossary %}
+{% if has_glossary %}
 - `guides/glossary.md`：术语速查表。
 {% endif %}
+- `raw/spine.md`：骨架提取阶段生成的知识骨架 Markdown。
 - `README.md`：安装和使用说明。
+
+## 章节数量
+
+共 {{ chapter_count }} 个章节文件。

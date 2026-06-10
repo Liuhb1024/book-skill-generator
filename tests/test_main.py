@@ -3,8 +3,7 @@ from pathlib import Path
 
 from fastapi.testclient import TestClient
 
-from app.models import ChapterInfo, ChapterOutput, SkeletonOutput
-from app.parsers.base import ParseError
+from app.models import ChapterInfo
 
 
 def test_health_check():
@@ -107,21 +106,15 @@ def test_sse_distill_mock_api(tmp_path, monkeypatch):
         return (
             BookMeta(format=BookFormat.TXT, total_chars=20, chapter_count=2),
             [
-                ChapterInfo(index=0, number="一", title="测试", content="内容", char_count=2),
-                ChapterInfo(index=1, number="二", title="继续", content="内容", char_count=2),
+                ChapterInfo(index=0, number="一", display_number="一", file_number="01", label="ch01", title="测试", content="内容", char_count=2),
+                ChapterInfo(index=1, number="二", display_number="二", file_number="02", label="ch02", title="继续", content="内容", char_count=2),
             ],
             "全文",
         )
 
-    def fake_skeleton(chapters, full_text):
+    def fake_skeleton(chapters, full_text, book_title="sample"):
         return (
-            SkeletonOutput(
-                thesis="核心论点",
-                frameworks=[{"name": "框架", "description": "说明", "related_chapters": ["一"]}],
-                chapter_index=[{"chapter_number": "一", "title": "测试", "summary": "摘要"}],
-                glossary=[],
-                distillable_score=0.9,
-            ),
+            "# 《sample》知识骨架\n\n## 全书核心论点\n核心论点\n\n## 可蒸馏度评估\n- 评分：0.9\n- 理由：可蒸馏",
             10,
             5,
             0.01,
@@ -129,18 +122,15 @@ def test_sse_distill_mock_api(tmp_path, monkeypatch):
 
     async def fake_process_one_chapter(chapter, semaphore):
         return (
-            ChapterOutput(
-                chapter_number=chapter.number,
-                chapter_title=chapter.title,
-                frameworks=["框架"],
-            ),
+            chapter.file_number,
+            chapter.title,
+            f"# 第{chapter.display_number}章：{chapter.title}\n\n## 核心要旨\n内容",
             3,
             2,
-            0.001,
         )
 
-    def fake_integrate(skeleton, chapter_outputs):
-        return ({"merged_frameworks": skeleton.frameworks, "skill_md_content": "content"}, 4, 2, 0.002)
+    def fake_integrate(spine_md, chapter_mds, book_title="sample", author="未知", slug="sample"):
+        return ("---\nname: sample\ndescription: test\nallowed-tools: Read\n---\n\n## 如何使用这个 Skill\n", 4, 2, 0.002)
 
     def fake_package(**kwargs):
         return zip_path

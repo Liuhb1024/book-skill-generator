@@ -1,7 +1,6 @@
 import asyncio
 import json
 import re
-import shutil
 import time
 import uuid
 from pathlib import Path
@@ -13,18 +12,12 @@ from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from sse_starlette.sse import AppStatus, EventSourceResponse
 
+from app.ai_client import estimate_cost
 from app.config import settings
-from app.models import ChapterOutput
 from app.parsers.base import ParseError
-from app.pipeline.runner import (
-    _pick_chapter_index,
-    _pick_frameworks,
-    _pick_glossary,
-    _pick_triggers,
-    make_slug,
-)
+from app.pipeline.runner import make_slug
 from app.pipeline.stage0_extract import extract
-from app.pipeline.stage1_skeleton import run_skeleton_extraction
+from app.pipeline.stage1_skeleton import extract_distillable_score, run_skeleton_extraction
 from app.pipeline.stage2_chapters import _process_one_chapter
 from app.pipeline.stage3_integrate import run_integration
 from app.pipeline.stage4_package import build_skill_package
@@ -77,8 +70,7 @@ async def upload(file: UploadFile = File(...)):
     file_id = uuid.uuid4().hex
     upload_dir = Path(settings.UPLOAD_DIR)
     upload_dir.mkdir(parents=True, exist_ok=True)
-    safe_name = _safe_upload_name(filename)
-    destination = upload_dir / f"{file_id}_{safe_name}"
+    destination = upload_dir / f"{file_id}_{_safe_upload_name(filename)}"
     async with aiofiles.open(destination, "wb") as f:
         await f.write(content)
 
@@ -86,10 +78,7 @@ async def upload(file: UploadFile = File(...)):
 
 
 @app.get("/api/distill/{file_id}")
-async def distill(
-    file_id: str,
-    title: str | None = Query(default=None),
-):
+async def distill(file_id: str, title: str | None = Query(default=None)):
     AppStatus.should_exit_event = None
     return EventSourceResponse(_distill_events(file_id, title))
 
@@ -119,66 +108,68 @@ async def _distill_events(file_id: str, title_override: str | None = None):
         meta, chapters, full_text = await asyncio.to_thread(extract, filepath)
         yield _event("stage0", {"chars": meta.total_chars, "chapters": len(chapters)})
 
-        skeleton, prompt_tokens, completion_tokens, cost = await asyncio.to_thread(
+        book_title = title_override or meta.title or filepath.stem.split("_", 1)[-1].strip()
+        slug = make_slug(book_title)
+        spine_md, prompt_tokens, completion_tokens, cost = await asyncio.to_thread(
             run_skeleton_extraction,
             chapters,
             full_text,
+            book_title,
         )
         total_prompt_tokens += prompt_tokens
         total_completion_tokens += completion_tokens
         total_cost += cost
+        score = extract_distillable_score(spine_md)
         yield _event(
             "stage1",
             {
-                "frameworks_count": len(skeleton.frameworks),
-                "thesis_preview": skeleton.thesis[:120],
+                "distillable_score": score,
+                "spine_preview": spine_md[:160],
             },
         )
 
-        if skeleton.distillable_score < 0.3:
-            yield _event("error", {"message": f"可蒸馏评分过低: {skeleton.distillable_score}"})
+        if score < 0.3:
+            yield _event("error", {"message": f"可蒸馏评分过低: {score}"})
             return
 
-        chapter_outputs, p_tokens, c_tokens, stage2_cost = await _distill_chapters_with_progress(chapters)
+        chapter_mds, p_tokens, c_tokens, stage2_cost = await _distill_chapters_with_progress(chapters)
         total_prompt_tokens += p_tokens
         total_completion_tokens += c_tokens
         total_cost += stage2_cost
-        for completed in range(1, len(chapters) + 1):
-            yield _event("stage2", {"completed": completed, "total": len(chapters)})
+        for completed in range(1, len(chapter_mds) + 1):
+            yield _event("stage2", {"completed": completed, "total": len(chapter_mds)})
 
-        integrated, prompt_tokens, completion_tokens, cost = await asyncio.to_thread(
+        skill_md_content, prompt_tokens, completion_tokens, cost = await asyncio.to_thread(
             run_integration,
-            skeleton,
-            chapter_outputs,
+            spine_md,
+            chapter_mds,
+            book_title,
+            meta.author or "未知",
+            slug,
         )
         total_prompt_tokens += prompt_tokens
         total_completion_tokens += completion_tokens
         total_cost += cost
-        yield _event("stage3", {"message": "知识整合完成"})
+        yield _event("stage3", {"message": "SKILL.md 生成完成"})
 
-        book_title = title_override or meta.title or filepath.stem.split("_", 1)[-1]
-        slug = make_slug(book_title)
         zip_path = await asyncio.to_thread(
             build_skill_package,
             title=book_title,
             slug=slug,
-            thesis=integrated.get("thesis") or skeleton.thesis,
-            frameworks=_pick_frameworks(integrated, skeleton),
-            chapter_index=_pick_chapter_index(integrated, skeleton),
-            glossary=_pick_glossary(integrated, skeleton),
-            triggers=_pick_triggers(integrated),
-            chapter_outputs=chapter_outputs,
+            skill_md_content=skill_md_content,
+            chapter_mds=chapter_mds,
+            glossary_terms=[],
+            spine_md=spine_md,
         )
         yield _event("stage4", {"zip_filename": zip_path.name})
 
         elapsed = round(time.monotonic() - start, 3)
-        total_tokens = total_prompt_tokens + total_completion_tokens
         yield _event(
             "complete",
             {
                 "zip_filename": zip_path.name,
                 "download_path": f"/api/download/{zip_path.name}",
-                "total_tokens": total_tokens,
+                "total_tokens": total_prompt_tokens + total_completion_tokens,
                 "total_cost": round(total_cost, 6),
                 "elapsed_seconds": elapsed,
             },
@@ -191,29 +182,22 @@ async def _distill_events(file_id: str, title_override: str | None = None):
 
 async def _distill_chapters_with_progress(chapters):
     semaphore = asyncio.Semaphore(settings.MAX_CONCURRENT_CHAPTERS)
-    tasks = [asyncio.create_task(_process_one_chapter(chapter, semaphore)) for chapter in chapters]
-    outputs: list[ChapterOutput] = []
+    target_chapters = [chapter for chapter in chapters if chapter.label.startswith("ch")]
+    tasks = [asyncio.create_task(_process_one_chapter(chapter, semaphore)) for chapter in target_chapters]
+    outputs = []
     total_prompt_tokens = 0
     total_completion_tokens = 0
     total_cost = 0.0
 
     for task in asyncio.as_completed(tasks):
-        result = await task
-        output, prompt_tokens, completion_tokens, cost = result
-        outputs.append(output)
+        number, title, markdown, prompt_tokens, completion_tokens = await task
+        outputs.append((number, title, markdown, prompt_tokens, completion_tokens))
         total_prompt_tokens += prompt_tokens
         total_completion_tokens += completion_tokens
-        total_cost += cost
+        total_cost += estimate_cost(prompt_tokens, completion_tokens, model=settings.CHAPTER_MODEL)
 
-    outputs.sort(key=lambda item: _chapter_sort_key(chapters, item))
+    outputs.sort(key=lambda item: item[0])
     return outputs, total_prompt_tokens, total_completion_tokens, round(total_cost, 6)
-
-
-def _chapter_sort_key(chapters, output: ChapterOutput) -> int:
-    for index, chapter in enumerate(chapters):
-        if chapter.number == output.chapter_number:
-            return index
-    return len(chapters)
 
 
 def _event(event: str, data: dict):
@@ -221,8 +205,7 @@ def _event(event: str, data: dict):
 
 
 def _find_upload(file_id: str) -> Path | None:
-    upload_dir = Path(settings.UPLOAD_DIR)
-    matches = sorted(upload_dir.glob(f"{file_id}_*"))
+    matches = sorted(Path(settings.UPLOAD_DIR).glob(f"{file_id}_*"))
     return matches[0] if matches else None
 
 
