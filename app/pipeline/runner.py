@@ -75,6 +75,10 @@ async def run_pipeline(filepath: Path) -> PipelineResult:
         total_prompt_tokens += prompt_tokens
         total_completion_tokens += completion_tokens
         total_cost += cost
+        for output in chapter_outputs:
+            for item in output.anti_patterns:
+                if item.startswith("处理失败:"):
+                    errors.append(f"Stage 2 chapter {output.chapter_number} failed: {item}")
     except Exception as exc:
         errors.append(f"Stage 2 chapter distillation failed: {exc}")
         chapter_outputs = [

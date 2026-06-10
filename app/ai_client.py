@@ -1,3 +1,5 @@
+import time
+
 from openai import OpenAI
 
 from app.config import settings
@@ -40,10 +42,20 @@ def call_ai(
     if request_format is not None:
         kwargs["response_format"] = request_format
 
-    response = get_client().chat.completions.create(**kwargs)
-    content = response.choices[0].message.content or ""
-    usage = response.usage
-    return content, usage.prompt_tokens, usage.completion_tokens
+    last_error: Exception | None = None
+    for delay in (1, 2, 4):
+        try:
+            response = get_client().chat.completions.create(**kwargs)
+            content = response.choices[0].message.content or ""
+            usage = response.usage
+            return content, usage.prompt_tokens, usage.completion_tokens
+        except Exception as exc:
+            last_error = exc
+            time.sleep(delay)
+
+    if last_error is not None:
+        raise last_error
+    raise RuntimeError("AI call failed without an exception")
 
 
 def estimate_cost(
