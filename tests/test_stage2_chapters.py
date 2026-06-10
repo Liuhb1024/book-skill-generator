@@ -5,7 +5,7 @@ import pytest
 
 from app.config import settings
 from app.pipeline.stage0_extract import extract
-from app.pipeline.stage2_chapters import _trim_chapter_content, run_chapter_distillation
+from app.pipeline.stage2_chapters import _has_repetition_loop, _trim_chapter_content, run_chapter_distillation
 
 
 def test_trim_short_content():
@@ -23,6 +23,15 @@ def test_trim_long_content():
     assert trimmed.endswith("B" * 8000)
     assert "省略" in trimmed
     assert len(trimmed) < len(content)
+
+
+def test_has_repetition_loop_detects_char_repeat():
+    assert _has_repetition_loop("正常文本" + "夫" * 15) is True
+
+
+def test_has_repetition_loop_detects_bigram_repeat():
+    assert _has_repetition_loop("前面内容" + "你好" * 10) is True
+    assert _has_repetition_loop("这是一段正常的章节蒸馏内容，包含多个框架和概念。") is False
 
 
 @pytest.mark.skipif(not settings.DEEPSEEK_API_KEY, reason="DEEPSEEK_API_KEY not configured")

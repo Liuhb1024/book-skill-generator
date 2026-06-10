@@ -78,7 +78,7 @@ async def run_pipeline(filepath: Path) -> PipelineResult:
         total_completion_tokens += completion_tokens
         total_cost += cost
         for number, title_text, markdown, _, _ in chapter_mds:
-            if "蒸馏失败" in markdown:
+            if "本章蒸馏失败：" in markdown:
                 errors.append(f"Stage 2 chapter {number} failed: {title_text}")
     except Exception as exc:
         return _result(

@@ -26,6 +26,21 @@ def _trim_chapter_content(
     )
 
 
+def _has_repetition_loop(text: str, char_threshold: int = 10) -> bool:
+    """检测字符级/2-gram/3-gram 连续重复。
+
+    例如 "夫夫夫夫夫夫夫夫夫夫夫" 会被 (.)\1{10,} 匹配。
+    阈值 10 意味着同一字符连续出现 11 次才触发。
+    """
+    if re.search(r"(.)\1{" + str(char_threshold) + r",}", text):
+        return True
+    if re.search(r"(.{2})\1{" + str(char_threshold // 2) + r",}", text):
+        return True
+    if re.search(r"(.{3})\1{" + str(char_threshold // 3) + r",}", text):
+        return True
+    return False
+
+
 async def run_chapter_distillation(
     chapters: list[ChapterInfo],
     max_concurrent: int = 10,
@@ -60,13 +75,15 @@ async def _process_one_chapter(
 ) -> ChapterMarkdown:
     async with semaphore:
         last_error: Exception | None = None
-        for _ in range(3):
+        for attempt in range(3):
             try:
                 user_prompt = USER_PROMPT_TEMPLATE.format(
                     chapter_number=chapter.display_number or chapter.number,
                     chapter_title=chapter.title,
                     chapter_content=_trim_chapter_content(chapter.content),
                 )
+                freq_pen = 0.5 + attempt * 0.3
+                pres_pen = 0.3 + attempt * 0.1
                 content, prompt_tokens, completion_tokens = await asyncio.to_thread(
                     call_ai,
                     SYSTEM_PROMPT,
@@ -74,7 +91,14 @@ async def _process_one_chapter(
                     model=settings.CHAPTER_MODEL,
                     response_format=None,
                     max_tokens=4096,
+                    frequency_penalty=freq_pen,
+                    presence_penalty=pres_pen,
                 )
+                if _has_repetition_loop(content):
+                    raise RuntimeError(
+                        f"检测到字符级重复循环 (attempt {attempt + 1}/3, "
+                        f"freq_pen={freq_pen}, pres_pen={pres_pen})，将重试"
+                    )
                 return (
                     chapter.file_number or chapter.number,
                     chapter.title,

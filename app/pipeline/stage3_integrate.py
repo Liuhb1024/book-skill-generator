@@ -32,6 +32,8 @@ def run_integration(
         model=settings.INTEGRATE_MODEL,
         response_format=None,
         max_tokens=8192,
+        frequency_penalty=0.3,
+        presence_penalty=0.3,
     )
     skill_md = _normalize_skill_md(_strip_code_fence(content), slug, book_title, len(chapter_mds))
     cost = estimate_cost(prompt_tokens, completion_tokens, model=settings.INTEGRATE_MODEL)
@@ -55,6 +57,22 @@ def _normalize_skill_md(skill_md: str, slug: str, book_title: str, chapter_count
         text = text.replace("---", "---\nallowed-tools: Read", 1)
     text = re.sub(r"\*\*章节\*\*：\d+章", f"**章节**：{chapter_count}章", text)
     text = re.sub(r"\*\*生成日期\*\*：\d{4}[-:/]\d{1,2}[-:/]\d{1,2}", f"**生成日期**：{date.today().isoformat()}", text)
+    text = _ensure_required_skill_sections(text)
+    return text
+
+
+def _ensure_required_skill_sections(text: str) -> str:
+    required_sections = {
+        "## 如何使用这个 Skill": "- `/slug` — 加载核心心智模型和框架总览",
+        "## 章节索引": "| 编号 | 标题 | 核心框架 | 文件 |\n|------|------|---------|------|",
+        "## 主题索引": "- **核心概念** → 查阅章节索引定位对应章节",
+        "## 触发场景": "- 当用户询问书中方法论时 → 查阅核心框架与章节索引",
+        "## 支持文件": "- [术语表](guides/glossary.md)",
+        "## 范围与限制": "本 Skill 覆盖本书内容。不包含书中未涉及的领域知识。",
+    }
+    for heading, fallback in required_sections.items():
+        if heading not in text:
+            text = f"{text.rstrip()}\n\n{heading}\n{fallback}\n"
     return text
 
 

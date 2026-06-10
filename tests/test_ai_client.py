@@ -31,6 +31,8 @@ def test_call_ai_returns_content_and_tokens(monkeypatch):
         temperature=0.1,
         response_format="json_object",
         max_tokens=512,
+        frequency_penalty=0.5,
+        presence_penalty=0.3,
     )
 
     assert content == '{"ok": true}'
@@ -40,6 +42,8 @@ def test_call_ai_returns_content_and_tokens(monkeypatch):
     assert fake_client.chat.completions.kwargs["temperature"] == 0.1
     assert fake_client.chat.completions.kwargs["max_tokens"] == 512
     assert fake_client.chat.completions.kwargs["response_format"] == {"type": "json_object"}
+    assert fake_client.chat.completions.kwargs["frequency_penalty"] == 0.5
+    assert fake_client.chat.completions.kwargs["presence_penalty"] == 0.3
     assert fake_client.chat.completions.kwargs["messages"] == [
         {"role": "system", "content": "You are a JSON API."},
         {"role": "user", "content": "Return ok."},

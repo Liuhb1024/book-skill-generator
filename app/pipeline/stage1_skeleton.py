@@ -56,6 +56,8 @@ def run_skeleton_extraction(
         model=settings.SKELETON_MODEL,
         response_format=None,
         max_tokens=4096,
+        frequency_penalty=0.3,
+        presence_penalty=0.3,
     )
     spine_md = _strip_code_fence(content)
     cost = estimate_cost(prompt_tokens, completion_tokens, model=settings.SKELETON_MODEL)
