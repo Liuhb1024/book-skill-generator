@@ -1,4 +1,5 @@
 import json
+import zipfile
 from pathlib import Path
 
 from fastapi.testclient import TestClient
@@ -88,6 +89,50 @@ def test_download_404():
     response = client.get("/api/download/missing.zip")
 
     assert response.status_code == 404
+
+
+def test_preview_tree_and_file(tmp_path, monkeypatch):
+    import app.main as main
+
+    zip_path = tmp_path / "sample_skill.zip"
+    with zipfile.ZipFile(zip_path, "w") as zf:
+        zf.writestr("SKILL.md", "# Skill\n\n**bold**")
+        zf.writestr("chapters/01-test.md", "# Chapter")
+        zf.writestr("raw/spine.txt", "plain")
+
+    monkeypatch.setattr(main.settings, "OUTPUT_DIR", str(tmp_path))
+    client = TestClient(main.app)
+
+    tree_response = client.get("/api/preview/sample_skill.zip/tree")
+    assert tree_response.status_code == 200
+    tree = tree_response.json()["tree"]
+    assert tree[0]["type"] == "dir"
+    assert tree[0]["name"] == "chapters"
+    assert any(node["name"] == "SKILL.md" and node["type"] == "file" for node in tree)
+
+    file_response = client.get("/api/preview/sample_skill.zip/file", params={"path": "SKILL.md"})
+    assert file_response.status_code == 200
+    payload = file_response.json()
+    assert payload["type"] == "markdown"
+    assert payload["content"] == "# Skill\n\n**bold**"
+
+    text_response = client.get("/api/preview/sample_skill.zip/file", params={"path": "raw/spine.txt"})
+    assert text_response.json()["type"] == "text"
+
+
+def test_preview_rejects_unsafe_paths(tmp_path, monkeypatch):
+    import app.main as main
+
+    zip_path = tmp_path / "sample_skill.zip"
+    with zipfile.ZipFile(zip_path, "w") as zf:
+        zf.writestr("SKILL.md", "# Skill")
+
+    monkeypatch.setattr(main.settings, "OUTPUT_DIR", str(tmp_path))
+    client = TestClient(main.app)
+
+    assert client.get("/api/preview/not-a-skill.zip/tree").status_code == 400
+    assert client.get("/api/preview/sample_skill.zip/file", params={"path": "../SKILL.md"}).status_code == 400
+    assert client.get("/api/preview/sample_skill.zip/file", params={"path": "missing.md"}).status_code == 404
 
 
 def test_sse_distill_mock_api(tmp_path, monkeypatch):

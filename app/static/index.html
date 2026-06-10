@@ -102,6 +102,37 @@
           </div>
 
           <a class="download-button" :href="result.download_path">下载 Skill 文件包 (.zip)</a>
+          <button class="preview-toggle" type="button" @click="togglePreview">
+            {{ previewOpen ? '收起预览' : '📂 预览文件结构' }}
+          </button>
+
+          <div v-if="previewOpen" class="preview-panel">
+            <aside class="file-tree">
+              <div class="tree-title">文件列表</div>
+              <tree-node
+                v-for="node in fileTree"
+                :key="node.path"
+                :node="node"
+                :depth="0"
+                :selected-path="selectedFilePath"
+                @select="selectFile"
+              ></tree-node>
+            </aside>
+
+            <section class="file-viewer">
+              <div v-if="previewLoading" class="viewer-empty">加载中...</div>
+              <div v-else-if="!selectedFile" class="viewer-empty">选择左侧文件查看内容</div>
+              <template v-else>
+                <div class="viewer-header">{{ selectedFile.path }}</div>
+                <div
+                  v-if="selectedFile.type === 'markdown'"
+                  class="markdown-body"
+                  v-html="renderedMarkdown"
+                ></div>
+                <pre v-else class="file-content">{{ selectedFile.content }}</pre>
+              </template>
+            </section>
+          </div>
         </div>
       </section>
     </main>
@@ -111,7 +142,7 @@
   <script>
     const { createApp } = Vue;
 
-    createApp({
+    const app = createApp({
       data() {
         return {
           uploaded: null,
@@ -122,6 +153,11 @@
           logs: [],
           result: null,
           errorMessage: '',
+          previewOpen: false,
+          fileTree: [],
+          selectedFile: null,
+          selectedFilePath: '',
+          previewLoading: false,
         };
       },
       computed: {
@@ -130,6 +166,9 @@
         },
         fileTag() {
           return this.uploaded ? this.uploaded.filename.split('.').pop().toUpperCase() : 'FILE';
+        },
+        renderedMarkdown() {
+          return this.selectedFile ? this.renderMarkdown(this.selectedFile.content) : '';
         },
       },
       methods: {
@@ -145,6 +184,10 @@
           this.errorMessage = '';
           this.result = null;
           this.logs = [];
+          this.previewOpen = false;
+          this.fileTree = [];
+          this.selectedFile = null;
+          this.selectedFilePath = '';
           this.addLog('pending', `上传 ${file.name}`);
 
           const form = new FormData();
@@ -170,12 +213,20 @@
           this.logs = [];
           this.result = null;
           this.errorMessage = '';
+          this.previewOpen = false;
+          this.fileTree = [];
+          this.selectedFile = null;
+          this.selectedFilePath = '';
         },
         startDistill() {
           if (!this.uploaded || this.running) return;
           this.running = true;
           this.result = null;
           this.errorMessage = '';
+          this.previewOpen = false;
+          this.fileTree = [];
+          this.selectedFile = null;
+          this.selectedFilePath = '';
           this.logs = [];
           this.progress = 10;
           this.addLog('pending', '等待解析书籍');
@@ -220,6 +271,145 @@
             events.close();
           });
         },
+        async togglePreview() {
+          this.previewOpen = !this.previewOpen;
+          if (!this.previewOpen || this.fileTree.length || !this.result) return;
+          this.previewLoading = true;
+          try {
+            const zipName = this.result.zip_filename;
+            const response = await fetch(`/api/preview/${encodeURIComponent(zipName)}/tree`);
+            if (!response.ok) throw new Error(await response.text());
+            const payload = await response.json();
+            this.fileTree = payload.tree;
+          } catch (error) {
+            this.errorMessage = `预览加载失败：${error.message}`;
+          } finally {
+            this.previewLoading = false;
+          }
+        },
+        async selectFile(path) {
+          if (!this.result) return;
+          this.selectedFilePath = path;
+          this.selectedFile = null;
+          this.previewLoading = true;
+          try {
+            const zipName = this.result.zip_filename;
+            const response = await fetch(`/api/preview/${encodeURIComponent(zipName)}/file?path=${encodeURIComponent(path)}`);
+            if (!response.ok) throw new Error(await response.text());
+            this.selectedFile = await response.json();
+          } catch (error) {
+            this.errorMessage = `文件读取失败：${error.message}`;
+          } finally {
+            this.previewLoading = false;
+          }
+        },
+        renderMarkdown(markdown) {
+          const escapeHtml = (value) => value
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;');
+          const inline = (value) => escapeHtml(value)
+            .replace(/`([^`]+)`/g, '<code>$1</code>')
+            .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
+            .replace(/\*([^*]+)\*/g, '<em>$1</em>');
+
+          const lines = markdown.split('\n');
+          const blocks = [];
+          let inCode = false;
+          let codeLines = [];
+          let listItems = [];
+          let tableRows = [];
+          let paragraph = [];
+
+          const flushParagraph = () => {
+            if (paragraph.length) {
+              blocks.push(`<p>${inline(paragraph.join(' '))}</p>`);
+              paragraph = [];
+            }
+          };
+          const flushList = () => {
+            if (listItems.length) {
+              blocks.push(`<ul>${listItems.map((item) => `<li>${inline(item)}</li>`).join('')}</ul>`);
+              listItems = [];
+            }
+          };
+          const flushTable = () => {
+            if (tableRows.length) {
+              const rows = tableRows
+                .filter((row) => !/^\s*\|?\s*:?-{3,}:?\s*(\|\s*:?-{3,}:?\s*)+\|?\s*$/.test(row))
+                .map((row, index) => {
+                  const cells = row.trim().replace(/^\||\|$/g, '').split('|').map((cell) => inline(cell.trim()));
+                  const tag = index === 0 ? 'th' : 'td';
+                  return `<tr>${cells.map((cell) => `<${tag}>${cell}</${tag}>`).join('')}</tr>`;
+                })
+                .join('');
+              blocks.push(`<table>${rows}</table>`);
+              tableRows = [];
+            }
+          };
+          const flushAll = () => {
+            flushParagraph();
+            flushList();
+            flushTable();
+          };
+
+          for (const line of lines) {
+            if (line.trim().startsWith('```')) {
+              if (inCode) {
+                blocks.push(`<pre><code>${escapeHtml(codeLines.join('\n'))}</code></pre>`);
+                codeLines = [];
+                inCode = false;
+              } else {
+                flushAll();
+                inCode = true;
+              }
+              continue;
+            }
+            if (inCode) {
+              codeLines.push(line);
+              continue;
+            }
+
+            if (!line.trim()) {
+              flushAll();
+              continue;
+            }
+            if (/^\|.+\|$/.test(line.trim())) {
+              flushParagraph();
+              flushList();
+              tableRows.push(line);
+              continue;
+            }
+
+            flushTable();
+            const heading = line.match(/^(#{1,4})\s+(.+)$/);
+            if (heading) {
+              flushParagraph();
+              flushList();
+              blocks.push(`<h${heading[1].length}>${inline(heading[2])}</h${heading[1].length}>`);
+              continue;
+            }
+            if (/^---+$/.test(line.trim())) {
+              flushAll();
+              blocks.push('<hr>');
+              continue;
+            }
+            if (line.trim().startsWith('>')) {
+              flushAll();
+              blocks.push(`<blockquote>${inline(line.trim().replace(/^>\s?/, ''))}</blockquote>`);
+              continue;
+            }
+            if (/^\s*-\s+/.test(line)) {
+              flushParagraph();
+              listItems.push(line.replace(/^\s*-\s+/, ''));
+              continue;
+            }
+            paragraph.push(line.trim());
+          }
+          flushAll();
+          if (inCode) blocks.push(`<pre><code>${escapeHtml(codeLines.join('\n'))}</code></pre>`);
+          return blocks.join('').replace(/<p>\s*<\/p>/g, '');
+        },
         addLog(status, text) {
           this.logs.push({ id: `${Date.now()}-${Math.random()}`, status, text });
         },
@@ -246,7 +436,65 @@
           return data.message || '完成';
         },
       },
-    }).mount('#app');
+    });
+
+    app.component('tree-node', {
+      props: {
+        node: { type: Object, required: true },
+        depth: { type: Number, default: 0 },
+        selectedPath: { type: String, default: '' },
+      },
+      emits: ['select'],
+      data() {
+        return { open: this.depth < 1 };
+      },
+      methods: {
+        formatSize(size) {
+          if (size < 1024) return `${size} B`;
+          return `${(size / 1024).toFixed(1)} KB`;
+        },
+        select(path) {
+          this.$emit('select', path);
+        },
+      },
+      template: `
+        <div>
+          <div
+            v-if="node.type === 'dir'"
+            class="tree-dir-name"
+            :style="{ paddingLeft: (depth * 16) + 'px' }"
+            @click="open = !open"
+          >
+            <span>{{ open ? '▾' : '▸' }}</span>
+            <span>📁</span>
+            <span>{{ node.name }}</span>
+          </div>
+          <button
+            v-else
+            type="button"
+            class="tree-file"
+            :class="{ selected: selectedPath === node.path }"
+            :style="{ paddingLeft: (depth * 16 + 20) + 'px' }"
+            @click="select(node.path)"
+          >
+            <span>{{ node.name.endsWith('.md') ? '📝' : '📄' }}</span>
+            <span class="tree-file-name">{{ node.name }}</span>
+            <span class="tree-file-size">{{ formatSize(node.size) }}</span>
+          </button>
+          <tree-node
+            v-if="node.type === 'dir' && open"
+            v-for="child in node.children"
+            :key="child.path"
+            :node="child"
+            :depth="depth + 1"
+            :selected-path="selectedPath"
+            @select="$emit('select', $event)"
+          ></tree-node>
+        </div>
+      `,
+    });
+
+    app.mount('#app');
   </script>
 </body>
 </html>

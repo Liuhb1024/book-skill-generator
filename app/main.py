@@ -3,6 +3,7 @@ import json
 import re
 import time
 import uuid
+import zipfile
 from pathlib import Path
 
 import aiofiles
@@ -91,6 +92,39 @@ async def download(file_path: str):
     if not path.exists() or not path.is_file() or path.suffix != ".zip":
         raise HTTPException(status_code=404, detail="文件不存在")
     return FileResponse(path, filename=path.name, media_type="application/zip")
+
+
+@app.get("/api/preview/{zip_filename}/tree")
+async def preview_tree(zip_filename: str):
+    zip_path = _resolve_preview_zip(zip_filename)
+    tree: list[dict] = []
+    with zipfile.ZipFile(zip_path) as zf:
+        for info in zf.infolist():
+            if info.is_dir():
+                continue
+            _insert_tree_node(tree, info.filename, info.file_size)
+    return {"tree": _sort_tree(tree)}
+
+
+@app.get("/api/preview/{zip_filename}/file")
+async def preview_file(zip_filename: str, path: str = Query(...)):
+    zip_path = _resolve_preview_zip(zip_filename)
+    if ".." in Path(path).parts or path.startswith("/"):
+        raise HTTPException(status_code=400, detail="不合法的文件路径")
+
+    with zipfile.ZipFile(zip_path) as zf:
+        try:
+            info = zf.getinfo(path)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail="文件不存在") from exc
+        content = zf.read(info).decode("utf-8", errors="replace")
+
+    return {
+        "path": path,
+        "content": content,
+        "type": "markdown" if path.lower().endswith(".md") else "text",
+        "size": info.file_size,
+    }
 
 
 async def _distill_events(file_id: str, title_override: str | None = None):
@@ -202,6 +236,49 @@ async def _distill_chapters_with_progress(chapters):
 
 def _event(event: str, data: dict):
     return {"event": event, "data": json.dumps(data, ensure_ascii=False)}
+
+
+def _resolve_preview_zip(zip_filename: str) -> Path:
+    name = Path(zip_filename).name
+    if name != zip_filename or "/" in zip_filename or "\\" in zip_filename or ".." in zip_filename:
+        raise HTTPException(status_code=400, detail="不合法的 zip 文件名")
+    if not name.endswith("_skill.zip"):
+        raise HTTPException(status_code=400, detail="不合法的 zip 文件名")
+    path = Path(settings.OUTPUT_DIR) / name
+    if not path.exists() or not path.is_file():
+        raise HTTPException(status_code=404, detail="zip 文件不存在")
+    return path
+
+
+def _insert_tree_node(tree: list[dict], file_path: str, size: int) -> None:
+    parts = [part for part in file_path.split("/") if part]
+    current = tree
+    path_parts = []
+    for index, part in enumerate(parts):
+        path_parts.append(part)
+        node_path = "/".join(path_parts)
+        is_file = index == len(parts) - 1
+        existing = next((node for node in current if node["name"] == part), None)
+        if existing is None:
+            existing = {
+                "name": part,
+                "path": node_path,
+                "type": "file" if is_file else "dir",
+            }
+            if is_file:
+                existing["size"] = size
+            else:
+                existing["children"] = []
+            current.append(existing)
+        if not is_file:
+            current = existing["children"]
+
+
+def _sort_tree(nodes: list[dict]) -> list[dict]:
+    for node in nodes:
+        if node["type"] == "dir":
+            node["children"] = _sort_tree(node["children"])
+    return sorted(nodes, key=lambda item: (item["type"] != "dir", item["name"].lower()))
 
 
 def _find_upload(file_id: str) -> Path | None:
