@@ -3,88 +3,105 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Book Skill Generator</title>
+  <title>Book → Skill</title>
   <link rel="icon" href="data:,">
   <link rel="stylesheet" href="/static/style.css">
 </head>
 <body>
-  <div id="app" class="shell">
-    <header class="topbar">
-      <div>
-        <p class="eyebrow">Book Skill Generator</p>
-        <h1>把一本书蒸馏成可安装的 Claude Code Skill</h1>
-      </div>
-      <div class="health">Pipeline ready</div>
+  <div id="app" class="app-shell">
+    <header class="hero">
+      <div class="logo-mark">B→S</div>
+      <h1>Book → Skill</h1>
+      <p>上传一本书，蒸馏成 Claude Code Skill</p>
     </header>
 
-    <main class="workspace">
-      <section class="panel upload-panel">
-        <div class="panel-head">
-          <span class="step">01</span>
+    <main class="stack">
+      <section class="card">
+        <div class="card-heading">
+          <span>01</span>
           <h2>上传书籍</h2>
         </div>
+
         <label
+          v-if="!uploaded"
           class="dropzone"
-          :class="{ active: isDragging, filled: uploaded }"
+          :class="{ active: isDragging }"
           @dragover.prevent="isDragging = true"
           @dragleave.prevent="isDragging = false"
           @drop.prevent="handleDrop"
         >
           <input type="file" accept=".pdf,.epub,.txt,.md" @change="handleFileInput">
-          <span class="drop-icon">+</span>
-          <strong>{{ uploaded ? uploaded.filename : '拖入文件或点击选择' }}</strong>
-          <small>PDF / EPUB / TXT / Markdown，最大 50MB</small>
+          <svg class="upload-icon" viewBox="0 0 48 48" aria-hidden="true">
+            <path d="M16 34h-3.5A7.5 7.5 0 0 1 12 19a12 12 0 0 1 23.5-2.5A8.8 8.8 0 0 1 36 34h-4" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>
+            <path d="M24 33V17m0 0-6 6m6-6 6 6" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
+          <strong>拖拽文件到此处，或点击上传</strong>
+          <small>PDF / EPUB / TXT，最大 50MB</small>
         </label>
-        <div v-if="uploaded" class="file-row">
-          <span>{{ uploaded.filename }}</span>
-          <span>{{ fileSizeMb }}</span>
-          <b>{{ fileTag }}</b>
+
+        <div v-else class="file-pill">
+          <div class="file-icon">{{ fileTag }}</div>
+          <div class="file-meta">
+            <strong>{{ uploaded.filename }}</strong>
+            <span>{{ fileSizeMb }}</span>
+          </div>
+          <button class="icon-button" type="button" @click="removeFile" aria-label="移除文件">×</button>
         </div>
       </section>
 
-      <section class="panel config-panel">
-        <div class="panel-head">
-          <span class="step">02</span>
-          <h2>配置</h2>
+      <section class="card">
+        <div class="card-heading">
+          <span>02</span>
+          <h2>书名与执行</h2>
         </div>
+
         <label class="field">
           <span>书名</span>
-          <input v-model="bookTitle" placeholder="自动使用文件名">
+          <input v-model="bookTitle" placeholder="上传后自动填入，可编辑">
         </label>
-        <div class="field">
-          <span>蒸馏深度</span>
-          <div class="segments">
-            <button v-for="item in depths" :key="item" :class="{ selected: depth === item }" @click="depth = item">
-              {{ item }}
-            </button>
-          </div>
-        </div>
-        <label class="check"><input type="checkbox" v-model="withGlossary"> 术语表</label>
-        <label class="check"><input type="checkbox" v-model="withCheatsheet"> 速查表</label>
+
+        <button class="primary-button" :disabled="!uploaded || running" @click="startDistill">
+          <span v-if="running" class="spinner"></span>
+          {{ running ? '正在蒸馏...' : '开始蒸馏' }}
+        </button>
       </section>
 
-      <section class="panel progress-panel">
-        <div class="panel-head">
-          <span class="step">03</span>
-          <h2>蒸馏进度</h2>
-        </div>
-        <button class="primary" :disabled="!uploaded || running" @click="startDistill">
-          {{ running ? '蒸馏中' : '开始蒸馏' }}
-        </button>
-        <div class="progress">
+      <section v-if="running || result || logs.length || errorMessage" class="card progress-card">
+        <div class="progress-line" :class="{ complete: result }">
           <div :style="{ width: progress + '%' }"></div>
         </div>
-        <div class="log">
-          <p v-for="line in logs" :key="line.id">{{ line.text }}</p>
+
+        <div class="card-heading">
+          <span>03</span>
+          <h2>进度与结果</h2>
         </div>
-        <div v-if="result" class="result">
-          <div class="success-mark">✓</div>
-          <dl>
-            <div><dt>耗时</dt><dd>{{ result.elapsed_seconds }}s</dd></div>
-            <div><dt>Token</dt><dd>{{ result.total_tokens }}</dd></div>
-            <div><dt>成本</dt><dd>¥{{ result.total_cost }}</dd></div>
-          </dl>
-          <a class="download" :href="result.download_path">下载 Skill Zip</a>
+
+        <div class="log-list">
+          <div v-for="line in logs" :key="line.id" class="log-row" :class="line.status">
+            <span class="status-icon">{{ iconFor(line.status) }}</span>
+            <p>{{ line.text }}</p>
+          </div>
+        </div>
+
+        <p v-if="errorMessage" class="error-text">{{ errorMessage }}</p>
+
+        <div v-if="result" class="result-block">
+          <div class="stats">
+            <div>
+              <strong>{{ result.elapsed_seconds }}</strong>
+              <span>总耗时 / 秒</span>
+            </div>
+            <div>
+              <strong>{{ result.total_tokens }}</strong>
+              <span>Token 消耗</span>
+            </div>
+            <div>
+              <strong>¥{{ result.total_cost }}</strong>
+              <span>API 成本</span>
+            </div>
+          </div>
+
+          <a class="download-button" :href="result.download_path">下载 Skill 文件包 (.zip)</a>
         </div>
       </section>
     </main>
@@ -99,15 +116,12 @@
         return {
           uploaded: null,
           bookTitle: '',
-          depth: '标准',
-          depths: ['快速', '标准', '深度'],
-          withGlossary: true,
-          withCheatsheet: false,
           isDragging: false,
           running: false,
           progress: 0,
           logs: [],
           result: null,
+          errorMessage: '',
         };
       },
       computed: {
@@ -115,7 +129,7 @@
           return this.uploaded ? `${(this.uploaded.size / 1024 / 1024).toFixed(2)} MB` : '';
         },
         fileTag() {
-          return this.uploaded ? this.uploaded.filename.split('.').pop().toUpperCase() : '';
+          return this.uploaded ? this.uploaded.filename.split('.').pop().toUpperCase() : 'FILE';
         },
       },
       methods: {
@@ -128,51 +142,108 @@
         },
         async upload(file) {
           if (!file) return;
+          this.errorMessage = '';
+          this.result = null;
+          this.logs = [];
+          this.addLog('pending', `上传 ${file.name}`);
+
           const form = new FormData();
           form.append('file', file);
-          this.addLog(`上传 ${file.name}`);
           const response = await fetch('/api/upload', { method: 'POST', body: form });
           if (!response.ok) {
-            this.addLog(`上传失败：${await response.text()}`);
+            this.errorMessage = await response.text();
+            this.addLog('error', '上传失败');
             return;
           }
+
           this.uploaded = await response.json();
           this.bookTitle = file.name.replace(/\.[^.]+$/, '');
           this.progress = 8;
+          this.markLastPendingDone();
+          this.addLog('done', '上传完成');
+        },
+        removeFile() {
+          if (this.running) return;
+          this.uploaded = null;
+          this.bookTitle = '';
+          this.progress = 0;
+          this.logs = [];
           this.result = null;
-          this.addLog('上传完成');
+          this.errorMessage = '';
         },
         startDistill() {
           if (!this.uploaded || this.running) return;
           this.running = true;
           this.result = null;
+          this.errorMessage = '';
           this.logs = [];
           this.progress = 10;
+          this.addLog('pending', '等待解析书籍');
+
           const params = new URLSearchParams({ title: this.bookTitle });
           const events = new EventSource(`/api/distill/${this.uploaded.file_id}?${params}`);
           const progressMap = { stage0: 22, stage1: 45, stage2: 68, stage3: 82, stage4: 94 };
+          const labels = {
+            stage0: '文本解析完成',
+            stage1: '知识骨架生成完成',
+            stage2: '章节 Markdown 蒸馏',
+            stage3: 'SKILL.md 整合完成',
+            stage4: '文件打包完成',
+          };
+
           ['stage0', 'stage1', 'stage2', 'stage3', 'stage4'].forEach((eventName) => {
             events.addEventListener(eventName, (event) => {
               const data = JSON.parse(event.data);
+              this.markLastPendingDone();
               this.progress = Math.max(this.progress, progressMap[eventName]);
-              this.addLog(`${eventName}: ${JSON.stringify(data)}`);
+              this.addLog('done', `${labels[eventName]} · ${this.summarizeEvent(eventName, data)}`);
+              if (eventName !== 'stage4') this.addLog('pending', this.nextLabel(eventName));
             });
           });
+
           events.addEventListener('complete', (event) => {
+            this.markLastPendingDone();
             this.result = JSON.parse(event.data);
             this.progress = 100;
             this.running = false;
-            this.addLog('完成');
+            this.addLog('done', '全部完成');
             events.close();
           });
+
           events.addEventListener('error', (event) => {
-            if (event.data) this.addLog(`错误：${event.data}`);
+            if (event.data) {
+              const data = JSON.parse(event.data);
+              this.errorMessage = data.message || event.data;
+              this.addLog('error', this.errorMessage);
+            }
             this.running = false;
             events.close();
           });
         },
-        addLog(text) {
-          this.logs.push({ id: `${Date.now()}-${Math.random()}`, text });
+        addLog(status, text) {
+          this.logs.push({ id: `${Date.now()}-${Math.random()}`, status, text });
+        },
+        markLastPendingDone() {
+          const item = [...this.logs].reverse().find((line) => line.status === 'pending');
+          if (item) item.status = 'done';
+        },
+        iconFor(status) {
+          return status === 'error' ? '❌' : status === 'done' ? '✅' : '⏳';
+        },
+        nextLabel(eventName) {
+          return {
+            stage0: '生成知识骨架',
+            stage1: '并行蒸馏章节',
+            stage2: '整合 SKILL.md',
+            stage3: '打包文件',
+          }[eventName] || '继续处理';
+        },
+        summarizeEvent(eventName, data) {
+          if (eventName === 'stage0') return `${data.chars} 字 / ${data.chapters} 段`;
+          if (eventName === 'stage1') return `评分 ${data.distillable_score}`;
+          if (eventName === 'stage2') return `${data.completed}/${data.total}`;
+          if (eventName === 'stage4') return data.zip_filename;
+          return data.message || '完成';
         },
       },
     }).mount('#app');

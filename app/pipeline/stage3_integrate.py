@@ -30,7 +30,6 @@ def run_integration(
         SYSTEM_PROMPT,
         user_prompt,
         model=settings.INTEGRATE_MODEL,
-        temperature=0.3,
         response_format=None,
         max_tokens=8192,
     )

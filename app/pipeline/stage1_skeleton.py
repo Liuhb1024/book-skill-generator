@@ -54,7 +54,6 @@ def run_skeleton_extraction(
         SYSTEM_PROMPT,
         user_prompt,
         model=settings.SKELETON_MODEL,
-        temperature=0.3,
         response_format=None,
         max_tokens=4096,
     )

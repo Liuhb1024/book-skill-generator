@@ -22,7 +22,7 @@ def call_ai(
     system_prompt: str,
     user_prompt: str,
     model: str | None = None,
-    temperature: float = 0.3,
+    temperature: float = 1.0,
     response_format: str | dict | None = "json_object",
     max_tokens: int = 4096,
 ) -> tuple[str, int, int]:

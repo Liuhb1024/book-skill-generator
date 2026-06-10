@@ -72,7 +72,6 @@ async def _process_one_chapter(
                     SYSTEM_PROMPT,
                     user_prompt,
                     model=settings.CHAPTER_MODEL,
-                    temperature=0.3,
                     response_format=None,
                     max_tokens=4096,
                 )
