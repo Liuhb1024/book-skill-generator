@@ -66,21 +66,10 @@
         </button>
       </section>
 
-      <section v-if="running || result || logs.length || errorMessage" class="card progress-card">
-        <div class="progress-line" :class="{ complete: result }">
-          <div :style="{ width: progress + '%' }"></div>
-        </div>
-
+      <section v-if="result || errorMessage" class="card progress-card">
         <div class="card-heading">
           <span>03</span>
           <h2>进度与结果</h2>
-        </div>
-
-        <div class="log-list">
-          <div v-for="line in logs" :key="line.id" class="log-row" :class="line.status">
-            <span class="status-icon">{{ iconFor(line.status) }}</span>
-            <p>{{ line.text }}</p>
-          </div>
         </div>
 
         <p v-if="errorMessage" class="error-text">{{ errorMessage }}</p>
@@ -135,6 +124,32 @@
           </div>
         </div>
       </section>
+
+      <div
+        v-if="running || logs.length"
+        class="floating-progress"
+        :class="{ complete: result, error: errorMessage }"
+        :style="{ '--progress': progress + '%' }"
+      >
+        <div class="progress-dot">
+          <span>{{ result ? '✓' : errorMessage ? '!' : Math.round(progress) }}</span>
+        </div>
+        <div class="progress-popover">
+          <div class="popover-head">
+            <strong>{{ result ? '蒸馏完成' : errorMessage ? '蒸馏失败' : '正在蒸馏' }}</strong>
+            <span>{{ Math.round(progress) }}%</span>
+          </div>
+          <div class="popover-bar" :class="{ complete: result, error: errorMessage }">
+            <div :style="{ width: progress + '%' }"></div>
+          </div>
+          <div class="log-list compact">
+            <div v-for="line in logs" :key="line.id" class="log-row" :class="line.status">
+              <span class="status-icon">{{ iconFor(line.status) }}</span>
+              <p>{{ line.text }}</p>
+            </div>
+          </div>
+        </div>
+      </div>
     </main>
   </div>
 
