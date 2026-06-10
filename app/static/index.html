@@ -1,0 +1,181 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Book Skill Generator</title>
+  <link rel="icon" href="data:,">
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <div id="app" class="shell">
+    <header class="topbar">
+      <div>
+        <p class="eyebrow">Book Skill Generator</p>
+        <h1>把一本书蒸馏成可安装的 Claude Code Skill</h1>
+      </div>
+      <div class="health">Pipeline ready</div>
+    </header>
+
+    <main class="workspace">
+      <section class="panel upload-panel">
+        <div class="panel-head">
+          <span class="step">01</span>
+          <h2>上传书籍</h2>
+        </div>
+        <label
+          class="dropzone"
+          :class="{ active: isDragging, filled: uploaded }"
+          @dragover.prevent="isDragging = true"
+          @dragleave.prevent="isDragging = false"
+          @drop.prevent="handleDrop"
+        >
+          <input type="file" accept=".pdf,.epub,.txt,.md" @change="handleFileInput">
+          <span class="drop-icon">+</span>
+          <strong>{{ uploaded ? uploaded.filename : '拖入文件或点击选择' }}</strong>
+          <small>PDF / EPUB / TXT / Markdown，最大 50MB</small>
+        </label>
+        <div v-if="uploaded" class="file-row">
+          <span>{{ uploaded.filename }}</span>
+          <span>{{ fileSizeMb }}</span>
+          <b>{{ fileTag }}</b>
+        </div>
+      </section>
+
+      <section class="panel config-panel">
+        <div class="panel-head">
+          <span class="step">02</span>
+          <h2>配置</h2>
+        </div>
+        <label class="field">
+          <span>书名</span>
+          <input v-model="bookTitle" placeholder="自动使用文件名">
+        </label>
+        <div class="field">
+          <span>蒸馏深度</span>
+          <div class="segments">
+            <button v-for="item in depths" :key="item" :class="{ selected: depth === item }" @click="depth = item">
+              {{ item }}
+            </button>
+          </div>
+        </div>
+        <label class="check"><input type="checkbox" v-model="withGlossary"> 术语表</label>
+        <label class="check"><input type="checkbox" v-model="withCheatsheet"> 速查表</label>
+      </section>
+
+      <section class="panel progress-panel">
+        <div class="panel-head">
+          <span class="step">03</span>
+          <h2>蒸馏进度</h2>
+        </div>
+        <button class="primary" :disabled="!uploaded || running" @click="startDistill">
+          {{ running ? '蒸馏中' : '开始蒸馏' }}
+        </button>
+        <div class="progress">
+          <div :style="{ width: progress + '%' }"></div>
+        </div>
+        <div class="log">
+          <p v-for="line in logs" :key="line.id">{{ line.text }}</p>
+        </div>
+        <div v-if="result" class="result">
+          <div class="success-mark">✓</div>
+          <dl>
+            <div><dt>耗时</dt><dd>{{ result.elapsed_seconds }}s</dd></div>
+            <div><dt>Token</dt><dd>{{ result.total_tokens }}</dd></div>
+            <div><dt>成本</dt><dd>¥{{ result.total_cost }}</dd></div>
+          </dl>
+          <a class="download" :href="result.download_path">下载 Skill Zip</a>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <script src="https://unpkg.com/vue@3/dist/vue.global.prod.js"></script>
+  <script>
+    const { createApp } = Vue;
+
+    createApp({
+      data() {
+        return {
+          uploaded: null,
+          bookTitle: '',
+          depth: '标准',
+          depths: ['快速', '标准', '深度'],
+          withGlossary: true,
+          withCheatsheet: false,
+          isDragging: false,
+          running: false,
+          progress: 0,
+          logs: [],
+          result: null,
+        };
+      },
+      computed: {
+        fileSizeMb() {
+          return this.uploaded ? `${(this.uploaded.size / 1024 / 1024).toFixed(2)} MB` : '';
+        },
+        fileTag() {
+          return this.uploaded ? this.uploaded.filename.split('.').pop().toUpperCase() : '';
+        },
+      },
+      methods: {
+        handleFileInput(event) {
+          this.upload(event.target.files[0]);
+        },
+        handleDrop(event) {
+          this.isDragging = false;
+          this.upload(event.dataTransfer.files[0]);
+        },
+        async upload(file) {
+          if (!file) return;
+          const form = new FormData();
+          form.append('file', file);
+          this.addLog(`上传 ${file.name}`);
+          const response = await fetch('/api/upload', { method: 'POST', body: form });
+          if (!response.ok) {
+            this.addLog(`上传失败：${await response.text()}`);
+            return;
+          }
+          this.uploaded = await response.json();
+          this.bookTitle = file.name.replace(/\.[^.]+$/, '');
+          this.progress = 8;
+          this.result = null;
+          this.addLog('上传完成');
+        },
+        startDistill() {
+          if (!this.uploaded || this.running) return;
+          this.running = true;
+          this.result = null;
+          this.logs = [];
+          this.progress = 10;
+          const params = new URLSearchParams({ title: this.bookTitle });
+          const events = new EventSource(`/api/distill/${this.uploaded.file_id}?${params}`);
+          const progressMap = { stage0: 22, stage1: 45, stage2: 68, stage3: 82, stage4: 94 };
+          ['stage0', 'stage1', 'stage2', 'stage3', 'stage4'].forEach((eventName) => {
+            events.addEventListener(eventName, (event) => {
+              const data = JSON.parse(event.data);
+              this.progress = Math.max(this.progress, progressMap[eventName]);
+              this.addLog(`${eventName}: ${JSON.stringify(data)}`);
+            });
+          });
+          events.addEventListener('complete', (event) => {
+            this.result = JSON.parse(event.data);
+            this.progress = 100;
+            this.running = false;
+            this.addLog('完成');
+            events.close();
+          });
+          events.addEventListener('error', (event) => {
+            if (event.data) this.addLog(`错误：${event.data}`);
+            this.running = false;
+            events.close();
+          });
+        },
+        addLog(text) {
+          this.logs.push({ id: `${Date.now()}-${Math.random()}`, text });
+        },
+      },
+    }).mount('#app');
+  </script>
+</body>
+</html>
